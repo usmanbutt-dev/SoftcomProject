@@ -1,0 +1,153 @@
+using System;
+using UnityEngine;
+
+namespace OneButtonRunner.Core
+{
+    /// <summary>
+    /// Handles all input for the one-button game.
+    /// Detects: Tap (Light Attack), Hold+Release (Charged Attack), Double-Tap (Gravity Flip)
+    /// </summary>
+    public class InputManager : MonoBehaviour
+    {
+        public static InputManager Instance { get; private set; }
+
+        [Header("Timing Settings")]
+        [SerializeField] private float holdThreshold = 0.2f;      // Time to distinguish tap from hold
+        [SerializeField] private float doubleTapWindow = 0.25f;   // Time window for double tap
+
+        // Events for other scripts to subscribe to
+        public event Action OnLightAttack;
+        public event Action OnChargeStart;
+        public event Action OnChargedAttackRelease;
+        public event Action OnGravityFlip;
+
+        // Internal state tracking
+        private float pressStartTime;
+        private float lastTapTime;
+        private bool isHolding;
+        private bool isCharging;
+        private bool waitingForDoubleTap;
+
+        private void Awake()
+        {
+            // Singleton pattern
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+        }
+
+        private void Update()
+        {
+            HandleInput();
+        }
+
+        private void HandleInput()
+        {
+            // Button pressed down
+            if (Input.GetKeyDown(KeyCode.Space) || Input.GetMouseButtonDown(0))
+            {
+                OnButtonDown();
+            }
+
+            // Button held
+            if (Input.GetKey(KeyCode.Space) || Input.GetMouseButton(0))
+            {
+                OnButtonHeld();
+            }
+
+            // Button released
+            if (Input.GetKeyUp(KeyCode.Space) || Input.GetMouseButtonUp(0))
+            {
+                OnButtonUp();
+            }
+
+            // Check for double-tap timeout
+            CheckDoubleTapTimeout();
+        }
+
+        private void OnButtonDown()
+        {
+            pressStartTime = Time.time;
+            isHolding = true;
+            isCharging = false;
+
+            // Check for double tap
+            if (waitingForDoubleTap && (Time.time - lastTapTime) <= doubleTapWindow)
+            {
+                // Double tap detected!
+                waitingForDoubleTap = false;
+                OnGravityFlip?.Invoke();
+                Debug.Log("[InputManager] GRAVITY FLIP!");
+            }
+        }
+
+        private void OnButtonHeld()
+        {
+            if (!isHolding) return;
+
+            float holdDuration = Time.time - pressStartTime;
+
+            // If held long enough, start charging
+            if (holdDuration >= holdThreshold && !isCharging)
+            {
+                isCharging = true;
+                waitingForDoubleTap = false; // Cancel any pending tap
+                OnChargeStart?.Invoke();
+                Debug.Log("[InputManager] CHARGE START!");
+            }
+        }
+
+        private void OnButtonUp()
+        {
+            if (!isHolding) return;
+
+            float holdDuration = Time.time - pressStartTime;
+            isHolding = false;
+
+            if (isCharging)
+            {
+                // Was charging - release charged attack
+                isCharging = false;
+                OnChargedAttackRelease?.Invoke();
+                Debug.Log("[InputManager] CHARGED ATTACK!");
+            }
+            else if (holdDuration < holdThreshold)
+            {
+                // Quick tap - could be first of double tap or light attack
+                if (!waitingForDoubleTap)
+                {
+                    waitingForDoubleTap = true;
+                    lastTapTime = Time.time;
+                }
+            }
+        }
+
+        private void CheckDoubleTapTimeout()
+        {
+            // If we're waiting for a second tap but it timed out, fire light attack
+            if (waitingForDoubleTap && (Time.time - lastTapTime) > doubleTapWindow)
+            {
+                waitingForDoubleTap = false;
+                OnLightAttack?.Invoke();
+                Debug.Log("[InputManager] LIGHT ATTACK!");
+            }
+        }
+
+        /// <summary>
+        /// Returns true if player is currently charging an attack
+        /// </summary>
+        public bool IsCharging => isCharging;
+
+        /// <summary>
+        /// Returns how long the button has been held (useful for charge meter UI)
+        /// </summary>
+        public float GetChargeTime()
+        {
+            if (!isCharging) return 0f;
+            return Time.time - pressStartTime - holdThreshold;
+        }
+    }
+}
